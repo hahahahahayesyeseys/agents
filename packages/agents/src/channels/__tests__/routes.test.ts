@@ -23,7 +23,7 @@ const approval: ChannelApprovalResponse = {
     id: "thread-1",
     isDirectMessage: true
   },
-  interactionId: "interaction-1",
+  approvalId: "interaction-1",
   decision: "approve",
   reference: "approval-1"
 };

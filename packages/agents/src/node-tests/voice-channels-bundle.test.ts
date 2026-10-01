@@ -54,12 +54,4 @@ describe("Voice and Channels bundle isolation", () => {
     expect(inputs).not.toContain("src/channels/adapters/slack.ts");
     expect(inputs).not.toContain("src/channels/adapters/telegram.ts");
   });
-
-  it("keeps the Channels Voice adapter off the Voice server and client", async () => {
-    const inputs = await bundledInputs("src/channels/voice.ts");
-    expect(inputs).toContain("src/voice/types.ts");
-    expect(inputs).not.toContain("src/voice/index.ts");
-    expect(inputs).not.toContain("src/voice/client.ts");
-    expect(inputs).not.toContain("src/voice/react.tsx");
-  });
 });

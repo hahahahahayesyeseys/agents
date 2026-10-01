@@ -1,5 +1,4 @@
-import { TextSegmentJoiner } from "../chat/text-segment-joiner";
-import type { Awaitable, ChannelChunk } from "./channel";
+import type { Awaitable } from "./channel";
 
 /** Why a consumption loop stopped reading. */
 export type StreamOutcome =
@@ -10,12 +9,6 @@ export type ChunkConsumer<TChunk, TResult> = {
   onChunk(chunk: TChunk): Awaitable<void>;
   /** Runs exactly once, whether the stream closed or ended abnormally. */
   onFinish(outcome: StreamOutcome): Awaitable<TResult>;
-};
-
-/** The complete text of a stream, and whether it ended before its answer did. */
-export type CollectedText = {
-  text: string;
-  interrupted: boolean;
 };
 
 /**
@@ -51,31 +44,6 @@ export async function consumeChunks<TChunk, TResult>(
   } finally {
     await cancellation;
   }
-}
-
-/**
- * Collect every `text` chunk into one Markdown answer.
- *
- * The result reports interruption instead of throwing, because a Channel that
- * has partial text still has to decide what to deliver.
- */
-export function collectText(
-  chunks: ReadableStream<ChannelChunk>
-): Promise<CollectedText> {
-  let text = "";
-  const joiner = new TextSegmentJoiner();
-  return consumeChunks(chunks, {
-    onChunk(chunk) {
-      for (const event of joiner.pushChunk(
-        chunk.type === "text"
-          ? { type: "text-delta", text: chunk.text }
-          : { type: chunk.type }
-      )) {
-        if (event.type === "text") text += event.text;
-      }
-    },
-    onFinish: (outcome) => ({ text, interrupted: outcome.interrupted })
-  });
 }
 
 /**

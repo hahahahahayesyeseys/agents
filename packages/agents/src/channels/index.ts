@@ -1,7 +1,4 @@
 export * from "./channel";
-export * from "./fallback";
-export * from "./fanout";
-export * from "./host";
 export * from "./identity";
 export * from "./ingress";
 export * from "./routes";

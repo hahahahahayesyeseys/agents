@@ -69,7 +69,7 @@ export type ChannelInboundMessage = ChannelEventContext & {
 /** A provider-normalized response to an external approval request. */
 export type ChannelApprovalResponse = ChannelEventContext & {
   readonly type: "approval-response";
-  readonly interactionId: string;
+  readonly approvalId: string;
   readonly decision: "approve" | "reject";
   /** Provider reference for this inbound response. */
   readonly reference: string;

@@ -1,6 +1,5 @@
 import type { ChannelMessage, DeliveryResult } from "./channel";
 import type { ChannelIngressResult } from "./ingress";
-import { isChannelMessageSurface, type ChannelMessageSurface } from "./surface";
 
 const textEncoder = new TextEncoder();
 
@@ -47,27 +46,6 @@ export function emptyIngressResponse<TRaw>(
   status = 200
 ): ChannelIngressResult<TRaw> {
   return { events: [], response: new Response(null, { status }) };
-}
-
-export function compositeDestinations(
-  surface: ChannelMessageSurface
-): readonly ChannelMessageSurface[] | undefined {
-  if (
-    surface.address === null ||
-    typeof surface.address !== "object" ||
-    Array.isArray(surface.address)
-  ) {
-    return undefined;
-  }
-  const destinations = (surface.address as Record<string, unknown>).surfaces;
-  if (
-    !Array.isArray(destinations) ||
-    destinations.length === 0 ||
-    !destinations.every(isChannelMessageSurface)
-  ) {
-    return undefined;
-  }
-  return destinations;
 }
 
 export function unsupported(

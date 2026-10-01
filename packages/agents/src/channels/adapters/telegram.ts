@@ -1,18 +1,6 @@
-import type {
-  Channel,
-  ChannelApprovalRequest,
-  ChannelChunk,
-  ChannelMessage,
-  ChannelRoute,
-  ChannelStreamOptions,
-  DeliveryResult
-} from "../channel";
-import { consumeChunks, createPacer } from "../stream";
+import type { Channel, ChannelMessage, ChannelRoute } from "../channel";
 import type { ChannelIdentity } from "../identity";
-import {
-  isChannelMessageSurface,
-  type ChannelMessageSurface
-} from "../surface";
+import type { ChannelMessageSurface } from "../surface";
 import {
   matchesPath,
   type ChannelApprovalResponseInput,
@@ -21,14 +9,7 @@ import {
   type ChannelIngress,
   type ChannelIngressEventInput
 } from "../ingress";
-import {
-  defaultText,
-  emptyIngressResponse,
-  encodeUtf8,
-  isRecord,
-  renderInput,
-  uncertain
-} from "../internal";
+import { emptyIngressResponse } from "../internal";
 
 export type TelegramUser = {
   id: number;
@@ -109,17 +90,7 @@ export type TelegramChannelOptions = {
   fetch?: typeof globalThis.fetch;
 };
 
-type TelegramApiResponse = {
-  ok?: unknown;
-  result?: unknown;
-  error_code?: unknown;
-  description?: unknown;
-};
-
-const TELEGRAM_MESSAGE_LIMIT = 4096;
-const DEFAULT_STREAM_INTERVAL_MS = 500;
 const DEFAULT_TELEGRAM_WEBHOOK_PATH = "/webhooks/telegram";
-const APPROVAL_INSTRUCTIONS = "Reply YES to approve or NO to reject.";
 const INTERACTION_FOOTER =
   /\n\nReply YES to approve or NO to reject\.\n\n\[channel-interaction:v1:([A-Za-z0-9_-]+)\]$/;
 
@@ -139,17 +110,7 @@ function updateIdentity(chatId: number, updateId: number): string {
   return `${channelIdentity(chatId)}:update:${updateId}`;
 }
 
-function encodeInteractionId(interactionId: string): string {
-  const bytes = encodeUtf8(interactionId);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function decodeInteractionId(value: string): string | undefined {
+function decodeApprovalId(value: string): string | undefined {
   try {
     const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
     const padding = "=".repeat((4 - (base64.length % 4)) % 4);
@@ -157,73 +118,11 @@ function decodeInteractionId(value: string): string | undefined {
     const bytes = Uint8Array.from(binary, (character) =>
       character.charCodeAt(0)
     );
-    const interactionId = new TextDecoder("utf-8", { fatal: true }).decode(
-      bytes
-    );
-    return interactionId || undefined;
+    const approvalId = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return approvalId || undefined;
   } catch {
     return undefined;
   }
-}
-
-function approvalText(
-  interactionId: string,
-  request: ChannelApprovalRequest
-): string {
-  return [
-    ...(request.title ? [request.title] : []),
-    request.summary,
-    `Input:\n${renderInput(request.input)}`,
-    APPROVAL_INSTRUCTIONS,
-    `[channel-interaction:v1:${encodeInteractionId(interactionId)}]`
-  ].join("\n\n");
-}
-
-function asApiResponse(value: unknown): TelegramApiResponse | undefined {
-  return value !== null && typeof value === "object"
-    ? (value as TelegramApiResponse)
-    : undefined;
-}
-
-function classifyResponse(
-  response: Response,
-  payload: TelegramApiResponse
-): DeliveryResult {
-  if (payload.ok === true) {
-    const result = asApiResponse(payload.result) as
-      | { message_id?: unknown }
-      | undefined;
-    if (typeof result?.message_id === "number") {
-      return { status: "delivered", reference: String(result.message_id) };
-    }
-    return uncertain(
-      "TELEGRAM_DELIVERY_ERROR",
-      "Telegram returned an invalid delivery response"
-    );
-  }
-
-  if (payload.ok === false) {
-    const errorCode =
-      typeof payload.error_code === "number"
-        ? payload.error_code
-        : response.status;
-    const message =
-      typeof payload.description === "string"
-        ? payload.description
-        : "Telegram rejected the message";
-    const error = { code: `TELEGRAM_API_ERROR_${errorCode}`, message };
-    if (errorCode >= 500) return { status: "uncertain", error };
-    return {
-      status: "failed",
-      retryable: errorCode === 429,
-      error
-    };
-  }
-
-  return uncertain(
-    "TELEGRAM_DELIVERY_ERROR",
-    "Telegram returned an invalid delivery response"
-  );
 }
 
 export type TelegramWebhookOptions = {
@@ -380,19 +279,19 @@ function approvalResponse(
   const author = reply.from;
   if (author?.is_bot !== true || author.id !== botUserId) return undefined;
 
-  const encodedInteractionId =
+  const encodedApprovalId =
     typeof reply.text === "string"
       ? reply.text.match(INTERACTION_FOOTER)?.[1]
       : undefined;
-  const interactionId = encodedInteractionId
-    ? decodeInteractionId(encodedInteractionId)
+  const approvalId = encodedApprovalId
+    ? decodeApprovalId(encodedApprovalId)
     : undefined;
-  if (!interactionId) return undefined;
+  if (!approvalId) return undefined;
 
   return {
     type: "approval-response",
     ...eventContext(message, eventId, botUserId),
-    interactionId,
+    approvalId,
     decision: message.text === "YES" ? "approve" : "reject",
     reference: messageIdentity(message.chat.id, message.message_id)
   };
@@ -481,314 +380,17 @@ export function telegramWebhook(
   };
 }
 
-function telegramSurface(
-  surface: ChannelMessageSurface
-): TelegramMessageSurface | undefined {
-  if (
-    !isChannelMessageSurface(surface) ||
-    surface.version !== 1 ||
-    !isRecord(surface.address) ||
-    typeof surface.address.chatId !== "string" ||
-    surface.address.chatId.length === 0 ||
-    (surface.address.botUserId !== undefined &&
-      (!Number.isSafeInteger(surface.address.botUserId) ||
-        Number(surface.address.botUserId) <= 0))
-  ) {
-    return undefined;
-  }
-  if (
-    (surface.address.messageThreadId !== undefined &&
-      !Number.isSafeInteger(surface.address.messageThreadId)) ||
-    (surface.address.replyToMessageId !== undefined &&
-      !Number.isSafeInteger(surface.address.replyToMessageId))
-  ) {
-    return undefined;
-  }
-  return surface as TelegramMessageSurface;
-}
-
-/**
- * Whether a chat can show an animated draft.
- *
- * `sendMessageDraft` is private chats only, and Telegram gives private chats
- * positive ids. Anywhere else the answer is simply sent once at the end.
- */
-function supportsDraft(chatId: string): boolean {
-  const numeric = Number(chatId);
-  return Number.isSafeInteger(numeric) && numeric > 0;
-}
-
-/** A non-zero draft identifier; reusing one animates between snapshots. */
-function newDraftId(): number {
-  const [random] = crypto.getRandomValues(new Uint32Array(1));
-  return ((random ?? 1) % 2_147_483_647) + 1;
-}
-
-function splitText(text: string, limit: number): string[] {
-  const pieces: string[] = [];
-  let piece = "";
-  let length = 0;
-  for (const character of text) {
-    if (length === limit) {
-      pieces.push(piece);
-      piece = "";
-      length = 0;
-    }
-    piece += character;
-    length += 1;
-  }
-  if (piece.length > 0) pieces.push(piece);
-  return pieces;
-}
-
-function textLength(text: string): number {
-  return [...text].length;
-}
-
-/** Create a configured Telegram Bot API Channel. */
+/** Create a configured Telegram ingress Channel. */
 export function telegram(
   options: TelegramChannelOptions
 ): Channel<TelegramUpdate> {
   if (!options.botToken.trim()) {
     throw new Error("botToken is required to create a Telegram channel");
   }
-  const fetch = options.fetch ?? globalThis.fetch;
-  const apiBaseUrl = (options.apiBaseUrl ?? "https://api.telegram.org").replace(
-    /\/$/,
-    ""
-  );
-  const maxLength = options.maxLength ?? TELEGRAM_MESSAGE_LIMIT;
-  if (
-    !Number.isInteger(maxLength) ||
-    maxLength < 1 ||
-    maxLength > TELEGRAM_MESSAGE_LIMIT
-  ) {
-    throw new Error(
-      `maxLength must be an integer between 1 and ${TELEGRAM_MESSAGE_LIMIT}`
-    );
-  }
-  const toText = options.toText ?? defaultText;
-  const streamIntervalMs =
-    options.streamIntervalMs ?? DEFAULT_STREAM_INTERVAL_MS;
-  if (!Number.isInteger(streamIntervalMs) || streamIntervalMs < 0) {
-    throw new Error("streamIntervalMs must be a non-negative integer");
-  }
   const botUserId = telegramBotUserId(options.botToken);
   const ingress = options.webhook
     ? telegramWebhook({ ...options.webhook, botUserId })
     : undefined;
-
-  async function send(
-    destinationValue: ChannelMessageSurface,
-    text: string,
-    parseMode?: TelegramChannelOptions["parseMode"]
-  ): Promise<DeliveryResult> {
-    const destination = telegramSurface(destinationValue);
-    if (
-      !destination ||
-      (botUserId !== undefined &&
-        destination.address.botUserId !== undefined &&
-        destination.address.botUserId !== botUserId)
-    ) {
-      return {
-        status: "failed",
-        retryable: false,
-        error: {
-          code: "TELEGRAM_SURFACE_INVALID",
-          message: `Telegram cannot parse the address for Channel "${destinationValue.channelKey}"`
-        }
-      };
-    }
-    if (textLength(text) > maxLength) {
-      return {
-        status: "failed",
-        retryable: false,
-        error: {
-          code: "TELEGRAM_MESSAGE_TOO_LONG",
-          message: `Telegram message exceeds the configured ${maxLength}-character limit`
-        }
-      };
-    }
-
-    let response: Response;
-    try {
-      response = await fetch(
-        `${apiBaseUrl}/bot${options.botToken}/sendMessage`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            chat_id: destination.address.chatId,
-            text,
-            ...(destination.address.messageThreadId !== undefined && {
-              message_thread_id: destination.address.messageThreadId
-            }),
-            ...(destination.address.replyToMessageId !== undefined && {
-              reply_parameters: {
-                message_id: destination.address.replyToMessageId
-              }
-            }),
-            ...(parseMode && { parse_mode: parseMode })
-          })
-        }
-      );
-    } catch {
-      return uncertain(
-        "TELEGRAM_DELIVERY_ERROR",
-        "Telegram delivery failed with an unknown outcome"
-      );
-    }
-
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      return uncertain(
-        "TELEGRAM_DELIVERY_ERROR",
-        "Telegram returned an invalid delivery response"
-      );
-    }
-
-    const apiResponse = asApiResponse(payload);
-    return apiResponse
-      ? classifyResponse(response, apiResponse)
-      : uncertain(
-          "TELEGRAM_DELIVERY_ERROR",
-          "Telegram returned an invalid delivery response"
-        );
-  }
-
-  /**
-   * Show one ephemeral preview. Failures are swallowed on purpose: a draft is
-   * a 30-second animation, and losing one must never cost the real message.
-   *
-   * The configured parse mode is deliberately not applied. A partial answer
-   * routinely holds unbalanced markup, which Telegram rejects outright.
-   */
-  async function sendDraft(
-    destination: TelegramMessageSurface,
-    draftId: number,
-    text: string
-  ): Promise<boolean> {
-    try {
-      const response = await fetch(
-        `${apiBaseUrl}/bot${options.botToken}/sendMessageDraft`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            chat_id: Number(destination.address.chatId),
-            draft_id: draftId,
-            text,
-            ...(destination.address.messageThreadId !== undefined && {
-              message_thread_id: destination.address.messageThreadId
-            })
-          })
-        }
-      );
-      return asApiResponse(await response.json())?.ok === true;
-    } catch {
-      return false;
-    }
-  }
-
-  /** Persist the answer, splitting it when it outgrows one Telegram message. */
-  async function sendComplete(
-    destination: ChannelMessageSurface,
-    text: string
-  ): Promise<DeliveryResult> {
-    const [head, ...tail] = splitText(text, maxLength);
-    // Raw HTML and Markdown cannot be partitioned safely without parsing it.
-    // Preserve all content literally rather than send malformed fragments.
-    const parseMode = tail.length === 0 ? options.parseMode : undefined;
-    const first = await send(destination, head!, parseMode);
-    if (first.status !== "delivered") return first;
-
-    for (const piece of tail) {
-      const result = await send(destination, piece, parseMode);
-      // A later piece failing still leaves earlier ones in the chat.
-      if (result.status !== "delivered") {
-        return uncertain(
-          "TELEGRAM_STREAM_PARTIAL",
-          "Telegram accepted only part of a split answer",
-          first.reference
-        );
-      }
-    }
-    return first;
-  }
-
-  async function streamMessage(
-    destinationValue: ChannelMessageSurface,
-    chunks: ReadableStream<ChannelChunk>,
-    streamOptions: ChannelStreamOptions
-  ): Promise<DeliveryResult> {
-    const destination = telegramSurface(destinationValue);
-    if (
-      !destination ||
-      (botUserId !== undefined &&
-        destination.address.botUserId !== undefined &&
-        destination.address.botUserId !== botUserId)
-    ) {
-      await chunks.cancel().catch(() => {});
-      return {
-        status: "failed",
-        retryable: false,
-        error: {
-          code: "TELEGRAM_SURFACE_INVALID",
-          message: `Telegram cannot parse the address for Channel "${destinationValue.channelKey}"`
-        }
-      };
-    }
-
-    const draftId = supportsDraft(destination.address.chatId)
-      ? newDraftId()
-      : undefined;
-    const prefix = streamOptions.title ? `${streamOptions.title}\n\n` : "";
-    const shouldPreview = createPacer(streamIntervalMs);
-    let answer = "";
-    let draftsStopped = draftId === undefined;
-
-    return consumeChunks(chunks, {
-      async onChunk(chunk) {
-        if (chunk.type !== "text" || chunk.text.length === 0) return;
-        answer += chunk.text;
-        if (draftsStopped || !shouldPreview()) return;
-        const preview = splitText(`${prefix}${answer}`, maxLength)[0] ?? "";
-        const shown = await sendDraft(destination, draftId!, preview);
-        if (!shown) draftsStopped = true;
-      },
-      async onFinish(outcome) {
-        // The draft is not the message. Without this send the reader's screen
-        // goes blank in thirty seconds and nothing is kept.
-        if (answer.length === 0) {
-          return {
-            status: "failed",
-            retryable: false,
-            error: outcome.interrupted
-              ? {
-                  code: "TELEGRAM_STREAM_INTERRUPTED",
-                  message: "The answer ended before producing any text to send"
-                }
-              : {
-                  code: "TELEGRAM_STREAM_EMPTY",
-                  message: "The stream carried no text to send"
-                }
-          };
-        }
-
-        const result = await sendComplete(destination, `${prefix}${answer}`);
-        if (!outcome.interrupted || result.status !== "delivered") {
-          return result;
-        }
-        return uncertain(
-          "TELEGRAM_STREAM_INTERRUPTED",
-          "An incomplete answer was sent because the stream ended early",
-          result.reference
-        );
-      }
-    });
-  }
 
   return {
     ...(options.route && { route: options.route }),
@@ -805,26 +407,6 @@ export function telegram(
         },
         label: `Telegram · ${match[1]} ${match[2]}`
       };
-    },
-    deliver(destination, message) {
-      return send(destination, toText(message), options.parseMode);
-    },
-    stream(destination, chunks, streamOptions) {
-      return streamMessage(destination, chunks, streamOptions);
-    },
-    requestApproval(destination, { interactionId, request }) {
-      if (interactionId.length === 0) {
-        return Promise.resolve({
-          status: "failed",
-          retryable: false,
-          error: {
-            code: "TELEGRAM_INTERACTION_ID_REQUIRED",
-            message:
-              "Telegram approval requests require a non-empty interaction id"
-          }
-        });
-      }
-      return send(destination, approvalText(interactionId, request));
     }
   };
 }

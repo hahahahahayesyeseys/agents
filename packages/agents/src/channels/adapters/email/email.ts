@@ -1,6 +1,5 @@
 import type {
   Channel,
-  ChannelApprovalLinks,
   ChannelRoute,
   DeliveryFailure,
   DeliveryResult
@@ -17,7 +16,7 @@ import {
   type InboundEmailOptions,
   type InboundEmailRaw
 } from "./inbound-email";
-import { renderInput, utf8ByteLength } from "../../internal";
+import { utf8ByteLength } from "../../internal";
 
 export type EmailAddress = EmailSurfaceAddress;
 export type EmailRecipients = EmailSurfaceRecipients;
@@ -52,17 +51,6 @@ export type EmailChannelOptions = {
 
 const DEFAULT_EMAIL_TITLE = "Agent message";
 const EMAIL_HEADER_VALUE_LIMIT = 2048;
-
-function approvalLinksUnavailable(retryable = false): DeliveryResult {
-  return {
-    status: "failed",
-    retryable,
-    error: {
-      code: "APPROVAL_LINKS_UNAVAILABLE",
-      message: "Email approval requests require caller-supplied approval links"
-    }
-  };
-}
 
 const PERMANENT_EMAIL_ERRORS = new Set([
   "E_VALIDATION_ERROR",
@@ -265,26 +253,6 @@ export function email(options: EmailChannelOptions): Channel<InboundEmailRaw> {
     },
     deliver(destination, message) {
       return send(destination, message.title, message.markdown);
-    },
-    async requestApproval(destination, { request, getApprovalLinks }) {
-      if (!getApprovalLinks) return approvalLinksUnavailable();
-
-      let links: ChannelApprovalLinks;
-      try {
-        links = await getApprovalLinks();
-      } catch {
-        // No provider send was attempted, so retrying cannot duplicate email
-        // delivery even when the caller-owned link lookup failed transiently.
-        return approvalLinksUnavailable(true);
-      }
-
-      const text = [
-        request.summary,
-        `Input:\n${renderInput(request.input)}`,
-        `Approve: ${links.approve}`,
-        `Reject: ${links.reject}`
-      ].join("\n\n");
-      return send(destination, request.title, text);
     }
   };
 }

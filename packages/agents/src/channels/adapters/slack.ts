@@ -1,32 +1,13 @@
-import type {
-  Channel,
-  ChannelApprovalRequest,
-  ChannelChunk,
-  ChannelMessage,
-  ChannelRoute,
-  ChannelStreamOptions,
-  DeliveryResult
-} from "../channel";
-import { collectText, consumeChunks, createPacer } from "../stream";
+import type { Channel, ChannelMessage, ChannelRoute } from "../channel";
 import type { ChannelIdentity } from "../identity";
-import {
-  isChannelMessageSurface,
-  type ChannelMessageSurface
-} from "../surface";
+import type { ChannelMessageSurface } from "../surface";
 import {
   matchesPath,
   type ChannelApprovalResponseInput,
   type ChannelInboundMessageInput,
   type ChannelIngress
 } from "../ingress";
-import {
-  defaultText,
-  emptyIngressResponse,
-  encodeUtf8,
-  isRecord,
-  renderInput,
-  uncertain
-} from "../internal";
+import { emptyIngressResponse, encodeUtf8, isRecord } from "../internal";
 
 /** The subset of a Slack event used by the adapter, with unknown fields retained. */
 export type SlackEvent = {
@@ -150,22 +131,9 @@ export type SlackChannelOptions = {
   fetch?: typeof globalThis.fetch;
 };
 
-type SlackApiResponse = {
-  ok?: unknown;
-  error?: unknown;
-  channel?: unknown;
-  ts?: unknown;
-};
-
-type SlackOpenConversationResponse = {
-  ok?: unknown;
-  error?: unknown;
-  channel?: { id?: unknown };
-};
-
 type ApprovalValue = {
   v: 1;
-  interactionId: string;
+  approvalId: string;
   decision: "approve" | "reject";
 };
 
@@ -173,25 +141,6 @@ const DEFAULT_SLACK_WEBHOOK_PATH = "/webhooks/slack";
 const DEFAULT_MAX_SKEW_SECONDS = 5 * 60;
 const APPROVE_ACTION_ID = "cloudflare_channels_approve_v1";
 const REJECT_ACTION_ID = "cloudflare_channels_reject_v1";
-const DEFAULT_STREAM_INTERVAL_MS = 500;
-const SLACK_APPEND_LIMIT = 12_000;
-const SLACK_TASK_FIELD_LIMIT = 256;
-const SLACK_CONTEXT_LIMIT = 3000;
-const AMBIGUOUS_SLACK_ERRORS = new Set([
-  "fatal_error",
-  "internal_error",
-  "request_timeout",
-  "service_unavailable"
-]);
-
-function approvalText(request: ChannelApprovalRequest): string {
-  return [
-    ...(request.title ? [request.title] : []),
-    request.summary,
-    `Input:\n\`\`\`\n${renderInput(request.input)}\n\`\`\``
-  ].join("\n\n");
-}
-
 function channelIdentity(teamId: string, channelId: string): string {
   return `slack:${teamId}:channel:${channelId}`;
 }
@@ -202,10 +151,6 @@ function messageIdentity(
   timestamp: string
 ): string {
   return `${channelIdentity(teamId, channelId)}:message:${timestamp}`;
-}
-
-function outboundReference(channelId: string, timestamp: string): string {
-  return `slack:channel:${channelId}:message:${timestamp}`;
 }
 
 function replySurfaceLabel(
@@ -370,8 +315,8 @@ function parseApprovalValue(value: string): ApprovalValue | undefined {
   if (
     !isRecord(parsed) ||
     parsed.v !== 1 ||
-    typeof parsed.interactionId !== "string" ||
-    !parsed.interactionId ||
+    typeof parsed.approvalId !== "string" ||
+    !parsed.approvalId ||
     (parsed.decision !== "approve" && parsed.decision !== "reject")
   ) {
     return undefined;
@@ -473,7 +418,7 @@ async function normalizedInteractions(
         }),
         isBot: false
       },
-      interactionId: approval.interactionId,
+      approvalId: approval.approvalId,
       decision: approval.decision,
       reference: actionTimestamp
         ? `${channelIdentity(teamId, channelId)}:action:${actionTimestamp}`
@@ -625,530 +570,14 @@ export function slackWebhook(
   };
 }
 
-function failed(
-  code: string,
-  message: string,
-  retryable: boolean
-): Extract<DeliveryResult, { status: "failed" }> {
-  return {
-    status: "failed",
-    retryable,
-    error: { code, message }
-  };
-}
-
-function slackErrorCode(error: string): string {
-  return `SLACK_API_ERROR_${error.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
-}
-
-function classifyApiFailure(
-  response: Response,
-  payload: SlackApiResponse
-): Exclude<DeliveryResult, { status: "delivered" }> {
-  if (payload.ok === false) {
-    const error =
-      typeof payload.error === "string" ? payload.error : "unknown_error";
-    const code = slackErrorCode(error);
-    const message = `Slack rejected the message: ${error}`;
-    if (response.status >= 500 || AMBIGUOUS_SLACK_ERRORS.has(error)) {
-      return uncertain(code, message);
-    }
-    return failed(
-      code,
-      message,
-      response.status === 429 || error === "ratelimited"
-    );
-  }
-
-  if (response.status === 429) {
-    return failed(
-      "SLACK_HTTP_ERROR_429",
-      "Slack rate limited the message",
-      true
-    );
-  }
-  if (response.status >= 400 && response.status < 500) {
-    return failed(
-      `SLACK_HTTP_ERROR_${response.status}`,
-      `Slack rejected the message with HTTP ${response.status}`,
-      false
-    );
-  }
-  return uncertain(
-    "SLACK_DELIVERY_ERROR",
-    "Slack returned an invalid delivery response"
-  );
-}
-
-function asApiResponse(value: unknown): SlackApiResponse | undefined {
-  return isRecord(value) ? value : undefined;
-}
-
-function approvalValue(
-  interactionId: string,
-  decision: "approve" | "reject"
-): string {
-  return JSON.stringify({
-    v: 1,
-    interactionId,
-    decision
-  } satisfies ApprovalValue);
-}
-
-/** A resolved conversation, with the reader a stream should be rendered for. */
-type SlackDestination = {
-  channelId: string;
-  threadTs?: string;
-  recipientUserId?: string;
-  recipientTeamId?: string;
-};
-
-type SlackTarget = SlackDestination | { teamId: string; userId: string };
-
-function optionalId(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function slackTarget(surface: ChannelMessageSurface): SlackTarget | undefined {
-  if (
-    !isChannelMessageSurface(surface) ||
-    surface.version !== 1 ||
-    !isRecord(surface.address)
-  ) {
-    return undefined;
-  }
-  const address = surface.address;
-  if ("userId" in address) {
-    return typeof address.teamId === "string" &&
-      address.teamId.length > 0 &&
-      typeof address.userId === "string" &&
-      address.userId.length > 0
-      ? { teamId: address.teamId, userId: address.userId }
-      : undefined;
-  }
-  if (typeof address.channelId !== "string" || address.channelId.length === 0) {
-    return undefined;
-  }
-  if (
-    "threadTs" in address &&
-    address.threadTs !== undefined &&
-    (typeof address.threadTs !== "string" || address.threadTs.length === 0)
-  ) {
-    return undefined;
-  }
-  const recipientUserId = optionalId(address.recipientUserId);
-  const recipientTeamId = optionalId(address.recipientTeamId);
-  return {
-    channelId: address.channelId,
-    ...(typeof address.threadTs === "string" && {
-      threadTs: address.threadTs
-    }),
-    // Slack rejects one without the other, so only carry a complete pair.
-    ...(recipientUserId &&
-      recipientTeamId && { recipientUserId, recipientTeamId })
-  };
-}
-
-type SlackStreamChunk =
-  | { type: "markdown_text"; text: string }
-  | {
-      type: "task_update";
-      id: string;
-      title: string;
-      status: "in_progress" | "complete" | "error";
-      details?: string;
-    };
-
-const SLACK_TASK_STATUS = {
-  started: "in_progress",
-  completed: "complete",
-  failed: "error"
-} as const;
-
-function splitText(text: string, limit: number): string[] {
-  const pieces: string[] = [];
-  let piece = "";
-  let length = 0;
-  for (const character of text) {
-    if (length === limit) {
-      pieces.push(piece);
-      piece = "";
-      length = 0;
-    }
-    piece += character;
-    length += 1;
-  }
-  if (piece.length > 0) pieces.push(piece);
-  return pieces;
-}
-
-function clamp(value: string, limit: number): string {
-  const characters = [...value];
-  return characters.length <= limit
-    ? value
-    : `${characters.slice(0, limit - 1).join("")}\u2026`;
-}
-
-function escapeMrkdwn(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function escapeLinkUrl(value: string): string {
-  return escapeMrkdwn(value.replaceAll("|", "%7C"));
-}
-
-function escapeLinkLabel(value: string): string {
-  return escapeMrkdwn(value).replaceAll("|", "&#124;");
-}
-
-/**
- * Render a neutral chunk as Slack stream content.
- *
- * `reasoning` has no Slack rendering and is dropped. A `source` is collected
- * rather than appended, so it can be rendered once beneath the finished
- * message instead of interrupting the text.
- */
-function toStreamChunks(
-  chunk: ChannelChunk,
-  sources: { url: string; title?: string }[]
-): SlackStreamChunk[] {
-  switch (chunk.type) {
-    case "text":
-      return splitText(chunk.text, SLACK_APPEND_LIMIT).map((text) => ({
-        type: "markdown_text",
-        text
-      }));
-    case "tool":
-      return [
-        {
-          type: "task_update",
-          id: clamp(chunk.id ?? chunk.name, SLACK_TASK_FIELD_LIMIT),
-          title: clamp(chunk.title ?? chunk.name, SLACK_TASK_FIELD_LIMIT),
-          status: SLACK_TASK_STATUS[chunk.status],
-          ...(chunk.detail !== undefined && {
-            details: clamp(chunk.detail, SLACK_TASK_FIELD_LIMIT)
-          })
-        }
-      ];
-    case "source":
-      sources.push(chunk);
-      return [];
-    case "reasoning":
-      return [];
-  }
-}
-
-function sourcesBlock(
-  sources: readonly { url: string; title?: string }[]
-): Record<string, unknown> {
-  const text = sources
-    .map(
-      (source) =>
-        `<${escapeLinkUrl(source.url)}|${escapeLinkLabel(source.title ?? source.url)}>`
-    )
-    .join(" \u00b7 ");
-  return {
-    type: "context",
-    elements: [{ type: "mrkdwn", text: clamp(text, SLACK_CONTEXT_LIMIT) }]
-  };
-}
-
-/** Create a configured Slack Web API Channel. */
+/** Create a configured Slack ingress Channel. */
 export function slack(
   options: SlackChannelOptions
 ): Channel<SlackIngressPayload> {
   if (!options.botToken.trim()) {
     throw new Error("botToken is required to create a Slack channel");
   }
-  const fetch = options.fetch ?? globalThis.fetch;
-  const apiBaseUrl = (options.apiBaseUrl ?? "https://slack.com/api").replace(
-    /\/$/,
-    ""
-  );
-  const toText = options.toText ?? defaultText;
-  const streamIntervalMs =
-    options.streamIntervalMs ?? DEFAULT_STREAM_INTERVAL_MS;
-  if (!Number.isInteger(streamIntervalMs) || streamIntervalMs < 0) {
-    throw new Error("streamIntervalMs must be a non-negative integer");
-  }
   const ingress = options.webhook ? slackWebhook(options.webhook) : undefined;
-
-  async function resolveTarget(
-    target: SlackTarget
-  ): Promise<SlackDestination | DeliveryResult> {
-    if (!("userId" in target)) return target;
-
-    let response: Response;
-    try {
-      response = await fetch(`${apiBaseUrl}/conversations.open`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${options.botToken}`,
-          "content-type": "application/json; charset=utf-8"
-        },
-        body: JSON.stringify({ users: target.userId })
-      });
-    } catch {
-      return failed(
-        "SLACK_CONTACT_RESOLUTION_FAILED",
-        "Slack could not resolve a direct-message destination",
-        true
-      );
-    }
-
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      return failed(
-        "SLACK_CONTACT_RESOLUTION_FAILED",
-        "Slack returned an invalid direct-message destination",
-        response.status === 429 || response.status >= 500
-      );
-    }
-    const result = isRecord(payload)
-      ? (payload as SlackOpenConversationResponse)
-      : undefined;
-    if (result?.ok === true && typeof result.channel?.id === "string") {
-      return {
-        channelId: result.channel.id,
-        recipientUserId: target.userId,
-        recipientTeamId: target.teamId
-      };
-    }
-    const error = typeof result?.error === "string" ? result.error : "unknown";
-    return failed(
-      slackErrorCode(error),
-      `Slack could not open a direct message: ${error}`,
-      response.status === 429 ||
-        response.status >= 500 ||
-        error === "ratelimited"
-    );
-  }
-
-  async function postMessage(
-    destination: ChannelMessageSurface,
-    text: string,
-    blocks?: readonly Record<string, unknown>[]
-  ): Promise<DeliveryResult> {
-    const unresolvedTarget = slackTarget(destination);
-    if (!unresolvedTarget) {
-      return failed(
-        "SLACK_SURFACE_INVALID",
-        `Slack cannot parse the address for Channel "${destination.channelKey}"`,
-        false
-      );
-    }
-
-    const target = await resolveTarget(unresolvedTarget);
-    if ("status" in target) return target;
-
-    const sent = await callSlack("chat.postMessage", {
-      channel: target.channelId,
-      text,
-      mrkdwn: true,
-      ...(target.threadTs && { thread_ts: target.threadTs }),
-      ...(blocks && { blocks })
-    });
-    return "status" in sent
-      ? sent
-      : {
-          status: "delivered",
-          reference: outboundReference(sent.channelId, sent.ts)
-        };
-  }
-
-  /**
-   * One transport path for every Slack method this Channel calls.
-   *
-   * Each of them answers with the conversation and timestamp on success, and
-   * every failure mode is classified the same way, so posting and streaming
-   * cannot drift apart.
-   */
-  async function callSlack(
-    method: string,
-    body: Record<string, unknown>
-  ): Promise<
-    | { channelId: string; ts: string }
-    | Exclude<DeliveryResult, { status: "delivered" }>
-  > {
-    let response: Response;
-    try {
-      response = await fetch(`${apiBaseUrl}/${method}`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${options.botToken}`,
-          "content-type": "application/json; charset=utf-8"
-        },
-        body: JSON.stringify(body)
-      });
-    } catch {
-      return uncertain(
-        "SLACK_DELIVERY_ERROR",
-        "Slack delivery failed with an unknown outcome"
-      );
-    }
-
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      payload = undefined;
-    }
-    const apiResponse = asApiResponse(payload);
-    if (
-      apiResponse?.ok === true &&
-      typeof apiResponse.channel === "string" &&
-      typeof apiResponse.ts === "string"
-    ) {
-      return { channelId: apiResponse.channel, ts: apiResponse.ts };
-    }
-    return apiResponse?.ok === true
-      ? uncertain(
-          "SLACK_DELIVERY_ERROR",
-          "Slack returned an invalid delivery response"
-        )
-      : classifyApiFailure(response, apiResponse ?? {});
-  }
-
-  async function streamMessage(
-    destination: ChannelMessageSurface,
-    chunks: ReadableStream<ChannelChunk>,
-    streamOptions: ChannelStreamOptions
-  ): Promise<DeliveryResult> {
-    const unresolvedTarget = slackTarget(destination);
-    if (!unresolvedTarget) {
-      await chunks.cancel().catch(() => {});
-      return failed(
-        "SLACK_SURFACE_INVALID",
-        `Slack cannot parse the address for Channel "${destination.channelKey}"`,
-        false
-      );
-    }
-
-    // Slack only permits native channel streaming in a thread. Preserve the
-    // simpler top-level application API by collecting and posting one ordinary
-    // message; direct-message targets still use native streaming.
-    if (
-      !("userId" in unresolvedTarget) &&
-      !unresolvedTarget.threadTs &&
-      !unresolvedTarget.recipientUserId
-    ) {
-      const collected = await collectText(chunks);
-      if (collected.interrupted && collected.text.length === 0) {
-        return failed(
-          "SLACK_STREAM_INTERRUPTED",
-          "The stream ended before producing any content to deliver",
-          false
-        );
-      }
-      const delivered = await postMessage(
-        destination,
-        toText({
-          ...(streamOptions.title && { title: streamOptions.title }),
-          markdown: collected.text
-        })
-      );
-      if (!collected.interrupted || delivered.status !== "delivered") {
-        return delivered;
-      }
-      return uncertain(
-        "SLACK_STREAM_INTERRUPTED",
-        "An incomplete answer was delivered because the stream ended early",
-        delivered.reference
-      );
-    }
-
-    const target = await resolveTarget(unresolvedTarget);
-    if ("status" in target) {
-      await chunks.cancel().catch(() => {});
-      return target;
-    }
-
-    const started = await callSlack("chat.startStream", {
-      channel: target.channelId,
-      ...(target.threadTs && { thread_ts: target.threadTs }),
-      ...(target.recipientUserId && {
-        recipient_user_id: target.recipientUserId,
-        recipient_team_id: target.recipientTeamId
-      }),
-      // Every call in a stream must use the mode the stream was opened in,
-      // so the title goes in a chunk rather than `markdown_text`. Opening
-      // with `markdown_text` makes Slack reject each later append with
-      // `streaming_mode_mismatch`, losing the whole answer.
-      ...(streamOptions.title && {
-        chunks: splitText(`${streamOptions.title}\n\n`, SLACK_APPEND_LIMIT).map(
-          (text) => ({ type: "markdown_text", text })
-        )
-      })
-    });
-    if ("status" in started) {
-      await chunks.cancel().catch(() => {});
-      return started;
-    }
-
-    const reference = outboundReference(started.channelId, started.ts);
-    const sources: { url: string; title?: string }[] = [];
-    const shouldFlush = createPacer(streamIntervalMs);
-    let pending: SlackStreamChunk[] = [];
-    let appendFailure:
-      | Exclude<DeliveryResult, { status: "delivered" }>
-      | undefined;
-
-    return consumeChunks(chunks, {
-      async onChunk(chunk) {
-        pending.push(...toStreamChunks(chunk, sources));
-        if (pending.length === 0 || !shouldFlush()) return;
-        const appended = await callSlack("chat.appendStream", {
-          channel: started.channelId,
-          ts: started.ts,
-          chunks: pending
-        });
-        pending = [];
-        if ("status" in appended) {
-          appendFailure = appended;
-          // Stop reading, but still stop the stream: Slack leaves a message
-          // stuck in its streaming state otherwise.
-          throw new Error(appended.error.message);
-        }
-      },
-      async onFinish(outcome) {
-        // Whatever the pacer withheld rides along on the terminal call, so an
-        // interrupted answer keeps its tail without an extra round trip.
-        const stopped = await callSlack("chat.stopStream", {
-          channel: started.channelId,
-          ts: started.ts,
-          ...(pending.length > 0 && !appendFailure && { chunks: pending }),
-          ...(sources.length > 0 && { blocks: [sourcesBlock(sources)] })
-        });
-        if ("status" in stopped) {
-          return uncertain(
-            stopped.error.code,
-            `Slack could not stop the stream: ${stopped.error.message}`,
-            reference
-          );
-        }
-        if (appendFailure) {
-          return uncertain(
-            appendFailure.error.code,
-            appendFailure.error.message,
-            reference
-          );
-        }
-        if (outcome.interrupted) {
-          return uncertain(
-            "SLACK_STREAM_INTERRUPTED",
-            "The answer ended early, so the Slack message is incomplete",
-            reference
-          );
-        }
-        return { status: "delivered", reference };
-      }
-    });
-  }
 
   return {
     ...(options.route && { route: options.route }),
@@ -1160,64 +589,6 @@ export function slack(
         address: { teamId: identity.scope, userId: identity.subject },
         label: `Slack · user ${identity.subject}`
       };
-    },
-    deliver(destination, message) {
-      return postMessage(destination, toText(message));
-    },
-    stream(destination, chunks, streamOptions) {
-      return streamMessage(destination, chunks, streamOptions);
-    },
-    requestApproval(destination, { interactionId, request }) {
-      if (interactionId.length === 0) {
-        return Promise.resolve(
-          failed(
-            "SLACK_INTERACTION_ID_REQUIRED",
-            "Slack approval requests require a non-empty interaction id",
-            false
-          )
-        );
-      }
-      const text = approvalText(request);
-      const approveValue = approvalValue(interactionId, "approve");
-      const rejectValue = approvalValue(interactionId, "reject");
-      if (
-        text.length > 3000 ||
-        approveValue.length > 2000 ||
-        rejectValue.length > 2000
-      ) {
-        return Promise.resolve(
-          failed(
-            "SLACK_APPROVAL_TOO_LONG",
-            "Slack approval content exceeds Block Kit limits",
-            false
-          )
-        );
-      }
-      return postMessage(destination, text, [
-        {
-          type: "section",
-          text: { type: "mrkdwn", text }
-        },
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              action_id: APPROVE_ACTION_ID,
-              text: { type: "plain_text", text: "Approve" },
-              style: "primary",
-              value: approveValue
-            },
-            {
-              type: "button",
-              action_id: REJECT_ACTION_ID,
-              text: { type: "plain_text", text: "Reject" },
-              style: "danger",
-              value: rejectValue
-            }
-          ]
-        }
-      ]);
     }
   };
 }
