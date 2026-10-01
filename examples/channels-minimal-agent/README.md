@@ -15,3 +15,13 @@ pnpm start
 ```
 
 Open the printed URL. Add `#some-name` to the URL to use a separate conversation.
+
+## Chat from a terminal
+
+With the dev server running, in another terminal:
+
+```sh
+pnpm tui [room]
+```
+
+This runs `@ai-sdk/tui` over `WebChannelChatTransport` from `agents/channels/web/ai-sdk`. The TUI runs `getLocation` itself and asks for approvals with `y` / `n`. Set `AGENT_ORIGIN` if the dev server is not on `ws://localhost:5173`. The browser and the TUI can share a room. Each browser and each TUI is its own participant (the client names itself with `?as=`, which only a demo should trust), so each runs only the `getLocation` calls from its own messages and shows the rest as not its to run.

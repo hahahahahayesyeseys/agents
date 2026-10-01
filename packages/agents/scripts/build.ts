@@ -54,6 +54,7 @@ const entries = [
   "src/channels/telegram.ts",
   "src/channels/web/index.ts",
   "src/channels/web/client.ts",
+  "src/channels/web/ai-sdk.ts",
   "src/channels/ai-sdk.ts"
 ];
 

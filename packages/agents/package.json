@@ -407,6 +407,11 @@
       "import": "./dist/channels/web/client.js",
       "require": "./dist/channels/web/client.js"
     },
+    "./channels/web/ai-sdk": {
+      "types": "./dist/channels/web/ai-sdk.d.ts",
+      "import": "./dist/channels/web/ai-sdk.js",
+      "require": "./dist/channels/web/ai-sdk.js"
+    },
     "./channels/ai-sdk": {
       "types": "./dist/channels/ai-sdk.d.ts",
       "import": "./dist/channels/ai-sdk.js",
