@@ -397,6 +397,16 @@
       "import": "./dist/channels/telegram.js",
       "require": "./dist/channels/telegram.js"
     },
+    "./channels/web": {
+      "types": "./dist/channels/web/index.d.ts",
+      "import": "./dist/channels/web/index.js",
+      "require": "./dist/channels/web/index.js"
+    },
+    "./channels/web/client": {
+      "types": "./dist/channels/web/client.d.ts",
+      "import": "./dist/channels/web/client.js",
+      "require": "./dist/channels/web/client.js"
+    },
     "./tsconfig": "./agents.tsconfig.json",
     "./vite": {
       "types": "./dist/vite.d.ts",

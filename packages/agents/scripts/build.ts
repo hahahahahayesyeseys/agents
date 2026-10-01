@@ -51,7 +51,9 @@ const entries = [
   "src/channels/index.ts",
   "src/channels/email.ts",
   "src/channels/slack.ts",
-  "src/channels/telegram.ts"
+  "src/channels/telegram.ts",
+  "src/channels/web/index.ts",
+  "src/channels/web/client.ts"
 ];
 
 for (const entry of entries) {

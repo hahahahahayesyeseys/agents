@@ -44,10 +44,12 @@ Each export maps to a public entry point that users `import` from. These are the
 | `agents/voice/workers-ai`    | `src/voice/workers-ai.ts`    | Workers AI speech providers                                                                      |
 | `agents/voice/sfu`           | `src/voice/sfu.ts`           | Realtime SFU and audio conversion helpers                                                        |
 | `agents/voice/text`          | `src/voice/text.ts`          | Sentence and streamed-text helpers                                                               |
-| `agents/channels`            | `src/channels/index.ts`      | Transport-neutral messaging contracts                                                            |
+| `agents/channels`            | `src/channels/index.ts`      | Turn protocol, Channels capability and ChannelGateway                                            |
 | `agents/channels/email`      | `src/channels/email.ts`      | Workers Email adapter and MIME ingress                                                           |
 | `agents/channels/slack`      | `src/channels/slack.ts`      | Slack adapter                                                                                    |
 | `agents/channels/telegram`   | `src/channels/telegram.ts`   | Telegram adapter                                                                                 |
+| `agents/channels/web`        | `src/channels/web/index.ts`  | Web Channel and its wire protocol                                                                |
+| `agents/channels/web/client` | `src/channels/web/client.ts` | Browser client for the Web Channel                                                               |
 
 The `agents:skills` virtual-module types ship from `skills-module.d.ts` (referenced from the built `dist/index.d.ts`); `@cloudflare/think` consumes `agents/skills` and `@cloudflare/ai-chat` can too.
 
