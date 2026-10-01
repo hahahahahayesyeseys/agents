@@ -1,5 +1,6 @@
 export * from "./channel";
 export * from "./conversations";
+export * from "./gateway";
 export * from "./identity";
 export * from "./ingress";
 export * from "./protocol";
