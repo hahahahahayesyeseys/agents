@@ -50,6 +50,7 @@ Each export maps to a public entry point that users `import` from. These are the
 | `agents/channels/telegram`   | `src/channels/telegram.ts`   | Telegram adapter                                                                                 |
 | `agents/channels/web`        | `src/channels/web/index.ts`  | Web Channel and its wire protocol                                                                |
 | `agents/channels/web/client` | `src/channels/web/client.ts` | Browser client for the Web Channel                                                               |
+| `agents/channels/ai-sdk`     | `src/channels/ai-sdk.ts`     | AI SDK conversions and send tool                                                                 |
 
 The `agents:skills` virtual-module types ship from `skills-module.d.ts` (referenced from the built `dist/index.d.ts`); `@cloudflare/think` consumes `agents/skills` and `@cloudflare/ai-chat` can too.
 
