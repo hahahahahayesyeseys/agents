@@ -1,6 +1,7 @@
 export * from "./channel";
 export * from "./identity";
 export * from "./ingress";
+export * from "./protocol";
 export * from "./routes";
 // Only the finalization contract is public. Pacing and collection stay
 // internal until a Channel outside this package needs them.
