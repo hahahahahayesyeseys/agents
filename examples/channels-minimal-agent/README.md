@@ -25,3 +25,5 @@ pnpm tui [room]
 ```
 
 This runs `@ai-sdk/tui` over `WebChannelChatTransport` from `agents/channels/web/ai-sdk`. The TUI runs `getLocation` itself and asks for approvals with `y` / `n`. Set `AGENT_ORIGIN` if the dev server is not on `ws://localhost:5173`. The browser and the TUI can share a room. Each browser and each TUI is its own participant (the client names itself with `?as=`, which only a demo should trust), so each runs only the `getLocation` calls from its own messages and shows the rest as not its to run.
+
+Alternatively, `pnpm tui2 [room]` runs the Agents SDK terminal client built on Pi TUI. It shows turns started from other surfaces and lets you provide client-tool results.
