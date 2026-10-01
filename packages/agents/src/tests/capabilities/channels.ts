@@ -9,6 +9,8 @@ import {
   type TranscriptMessage,
   type TurnStatus
 } from "../../channels";
+import { slack } from "../../channels/adapters/slack";
+import type { GatewayEvent } from "../../channels/gateway";
 import { WebChannel } from "../../channels/web";
 import { Lifecycle } from "../../lifecycle";
 import { Streams } from "../../streams";
@@ -24,12 +26,34 @@ export class ChannelsHarnessObject extends DurableObject<Cloudflare.Env> {
   snapshotState: ConversationSnapshot = { messages: [], turns: [] };
   rejectEvents = false;
   readonly #responses = new Map<string, ResponseWriter>();
+  /** Every call the Slack Channel made, answered as a working Slack would. */
+  readonly slackCalls: { method: string; body: Record<string, unknown> }[] = [];
+  #slackTs = 0;
+
   readonly streams = new Streams({ maxChunkBytes: 1024 });
   readonly websockets = new WebSockets();
   readonly channels = new Channels({
     streams: this.streams,
     channels: {
-      web: new WebChannel({ websockets: this.websockets })
+      web: new WebChannel({ websockets: this.websockets }),
+      slack: slack({
+        botToken: "xoxb-test",
+        streamIntervalMs: 0,
+        fetch: async (input, init) => {
+          const method = String(input).split("/").pop() ?? "";
+          const body = JSON.parse(String(init?.body)) as Record<
+            string,
+            unknown
+          >;
+          this.slackCalls.push({ method, body });
+          this.#slackTs += 1;
+          return Response.json({
+            ok: true,
+            channel: body.channel,
+            ts: `1800000000.${this.#slackTs}`
+          });
+        }
+      })
     },
     snapshot: async () => this.snapshotState,
     onEvent: async (event, origin) => {
@@ -42,6 +66,15 @@ export class ChannelsHarnessObject extends DurableObject<Cloudflare.Env> {
     .use(this.streams)
     .use(this.channels)
     .use(this.websockets);
+
+  /** An event as the gateway would deliver it. */
+  receive(event: GatewayEvent, origin: EventOrigin): Promise<void> {
+    return this.channels.receive(event, origin);
+  }
+
+  getSlackCalls() {
+    return this.slackCalls;
+  }
 
   getReceived() {
     return this.received;
