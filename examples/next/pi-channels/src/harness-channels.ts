@@ -63,6 +63,7 @@ export class HarnessChannels {
   readonly #kv: SyncKvStorage;
   #watch: Promise<AgentEventStream> | undefined;
   #run: Run | undefined;
+  readonly #settling = new Set<string>();
   /** pi submission id → operation id, from `submission` events. */
   readonly #operations = new Map<string, string>();
 
@@ -94,6 +95,8 @@ export class HarnessChannels {
       const text = event.message.parts
         .map((part) => (part.type === "text" ? part.text : ""))
         .join("");
+      // The surface's message id, which may differ from its event id.
+      this.#kv.put(`message:${event.eventId}`, event.message.id);
       if (!this.#turn(event.eventId)) {
         await this.#save({
           turnId: event.eventId,
@@ -174,7 +177,6 @@ export class HarnessChannels {
         this.#run?.closeParts();
         const message = projectEntry(event.entry);
         if (message?.role !== "assistant") return;
-        this.#run?.messageIds.push(message.id);
         for (const part of message.parts) {
           if (part.type === "tool-call") {
             this.#run?.toolCall(part.id, part.name, part.arguments as Json);
@@ -223,7 +225,10 @@ export class HarnessChannels {
     this.#operations.set(String(record.id), turnId);
     if (record.status === "placed") {
       // Show the user's message under the id the surface sent it with.
-      this.#kv.put(`user:${record.entry}`, turnId);
+      this.#kv.put(
+        `user:${record.entry}`,
+        this.#kv.get<string>(`message:${turnId}`) ?? turnId
+      );
       if (this.#run) await this.#join(turnId); // a steer joins the run
       return;
     }
@@ -271,9 +276,22 @@ export class HarnessChannels {
       | { outcome: "failed"; error: string }
   ): Promise<void> {
     const turn = this.#turn(turnId);
-    if (!turn || turn.status === "settled") return;
-    await this.#publishTranscript();
-    const messageIds = this.#run?.messageIds ?? [];
+    // pi's submission event and the run_end fallback can both get here.
+    if (!turn || turn.status === "settled" || this.#settling.has(turnId)) {
+      return;
+    }
+    this.#settling.add(turnId);
+    const transcript = await this.#transcript();
+    await this.#publish(transcript);
+    // The turn's messages are what follows its user message. Not the run's
+    // own list: pi often reports the outcome after the run has ended.
+    const userId = this.#kv.get<string>(`message:${turnId}`) ?? turnId;
+    const start = transcript.findIndex((m) => m.id === userId);
+    const messageIds: string[] = [];
+    for (const message of start === -1 ? [] : transcript.slice(start + 1)) {
+      if (message.role === "user") break;
+      messageIds.push(message.id);
+    }
     await this.#save({
       turnId: turn.turnId,
       startedBy: turn.startedBy,
@@ -287,12 +305,13 @@ export class HarnessChannels {
   // ── State ───────────────────────────────────────────────────────────────
 
   async #publishTranscript(): Promise<void> {
+    await this.#publish(await this.#transcript());
+  }
+
+  async #publish(transcript: TranscriptMessage[]): Promise<void> {
     const conversationId = this.#conversation();
     if (!conversationId) return;
-    await this.#channels().publishMessages(
-      conversationId,
-      await this.#transcript()
-    );
+    await this.#channels().publishMessages(conversationId, transcript);
   }
 
   async #transcript(): Promise<TranscriptMessage[]> {
@@ -321,7 +340,6 @@ export class HarnessChannels {
 
 /** One pi run streaming into one Channels response. */
 class Run {
-  readonly messageIds: string[] = [];
   /** Open text and reasoning parts of the live message, by content index. */
   #open = new Map<number, { kind: "text" | "reasoning"; id: string }>();
   #message = 0;
