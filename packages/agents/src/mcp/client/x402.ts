@@ -28,6 +28,12 @@ import {
 } from "./invoker";
 import type { ZodRawShape } from "zod";
 
+type V2RequestExtra = {
+  mcpReq?: {
+    _meta?: Record<string, unknown>;
+  };
+};
+
 // v2 imports from @x402/core
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import type { FacilitatorConfig, ResourceConfig } from "@x402/core/server";
@@ -180,8 +186,12 @@ export function withX402<T extends McpServer>(
         // Get payment token from MCP _meta or HTTP headers
         // Support both v2 (PAYMENT-SIGNATURE) and v1 (X-PAYMENT) header names
         const headers = extra?.requestInfo?.headers ?? {};
+        const v2Meta = (extra as unknown as V2RequestExtra).mcpReq?._meta;
+        const v2Token = v2Meta?.["x402/payment"];
+        const v1Token = extra?._meta?.["x402/payment"];
         const token =
-          (extra?._meta?.["x402/payment"] as string | undefined) ??
+          (typeof v2Token === "string" ? v2Token : undefined) ??
+          (typeof v1Token === "string" ? v1Token : undefined) ??
           headers["PAYMENT-SIGNATURE"] ??
           headers["X-PAYMENT"];
 

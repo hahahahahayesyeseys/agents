@@ -234,6 +234,29 @@ describe("withX402", () => {
     expect(meta["x402/error"].error).toBe("INVALID_PAYMENT");
   });
 
+  it("reads payment token from MCP v2 request metadata", async () => {
+    const server = createMockMcpServer();
+    const augmented = withX402(server, defaultServerConfig);
+
+    mockResourceServer.buildPaymentRequirements.mockResolvedValue(
+      samplePaymentRequirements
+    );
+
+    augmented.paidTool("paid-tool", "Costs money", 0.01, {}, {}, async () => ({
+      content: [{ type: "text" as const, text: "result" }]
+    }));
+
+    const registeredCb = getRegisteredCallback(server);
+    const result = (await registeredCb(
+      {},
+      { mcpReq: { _meta: { "x402/payment": "not-valid-json-base64!@#$" } } }
+    )) as Record<string, unknown>;
+
+    expect(result.isError).toBe(true);
+    const meta = result._meta as Record<string, Record<string, unknown>>;
+    expect(meta["x402/error"].error).toBe("INVALID_PAYMENT");
+  });
+
   it("returns INVALID_PAYMENT when no matching requirements found", async () => {
     const server = createMockMcpServer();
     const augmented = withX402(server, defaultServerConfig);
