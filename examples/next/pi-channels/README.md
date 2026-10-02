@@ -1,12 +1,14 @@
 # Pi harness on Channels (spike)
 
-Experimental proof of concept. It serves the example `PiHarness` from
-[`../harnesses/pi`](../harnesses/pi) through Channels, so `npx agents tui` talks to a pi-durable agent. It is not well engineered and is
-not meant to merge as is.
+Experimental proof of concept. It serves `PiHarness` from the experimental
+`agents/harnesses/pi` entry point through Channels, so `npx agents tui`
+talks to a pi-durable agent. It is not well engineered and is not meant to
+merge as is.
 
-- `src/server.ts` is one Durable Object per room: `PiHarness` (imported from
-  `../harnesses/pi/src/harness`), `Streams`, `Channels` with the Web Channel, and
-  `WebSockets`. The Worker is a `ChannelGateway`.
+- `src/server.ts` is one Durable Object per room: `PiHarness` (from
+  `agents/harnesses/pi`, set up as in [`../harnesses/pi`](../harnesses/pi)),
+  `Streams`, `Channels` with the Web Channel, and `WebSockets`. The Worker
+  is a `ChannelGateway`.
 - `src/harness-channels.ts` is the bridge. It is typed against
   `ConversationHarness`, the part of the shared `examples/next/harnesses`
   shape it uses (`submit`, `abort`, `wait`, `messages`,
@@ -14,15 +16,16 @@ not meant to merge as is.
 
 ## How the two models line up
 
-| Channels                              | Harness                                                                              |
-| ------------------------------------- | ------------------------------------------------------------------------------------ |
-| Inbound `message` event               | `harness.submit(text, { operationId: eventId })`                                     |
-| Turn id                               | Operation id (the event id), so pi deduplicates redelivery                           |
-| Turn `queued` / `running` / `settled` | pi `submission` events: `queued`, `placed`, `done` / `unanswered`                    |
-| Response                              | One per pi run, fed from `session.events()` (`message_update`, `tool_execution_end`) |
-| Transcript and snapshot               | `harness.messages()`, tool results folded into their call                            |
-| `cancel`                              | `harness.abort({ operationId })`                                                     |
-| `approval-response`, `tool-result`    | Ignored: pi-durable has neither yet                                                  |
+| Channels                                             | Harness                                                                              |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Inbound `message` event                              | `harness.submit(text, { operationId: eventId })`                                     |
+| Turn id                                              | Operation id (the event id), so pi deduplicates redelivery                           |
+| Turn `queued` / `running` / `settled`                | pi `submission` events: `queued`, `placed`, `done` / `unanswered`                    |
+| Response                                             | One per pi run, fed from `session.events()` (`message_update`, `tool_execution_end`) |
+| Transcript and snapshot                              | `harness.messages()` (pi entries), projected with the pi example's                   |
+| `transcript.ts`, tool results folded into their call |
+| `cancel`                                             | `harness.abort({ operationId })`                                                     |
+| `approval-response`, `tool-result`                   | Ignored: pi-durable has neither yet                                                  |
 
 What this surfaced:
 

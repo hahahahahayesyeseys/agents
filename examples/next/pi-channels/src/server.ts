@@ -7,9 +7,9 @@ import { WebChannel } from "agents/channels/web";
 import { Lifecycle } from "agents/lifecycle";
 import { Streams } from "agents/streams";
 import { WebSockets } from "agents/websockets";
-import { PiHarness } from "../../harnesses/pi/src/harness/pi-harness";
-import { createModels } from "../../harnesses/pi/src/providers/models";
-import { workersAI } from "../../harnesses/pi/src/providers/workers-ai";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { PiHarness } from "agents/harnesses/pi";
+import { CLOUDFLARE_PROVIDER_ID, createAI } from "agents/models/pi-ai";
 import { HarnessChannels } from "./harness-channels";
 
 const MODEL_ID = "@cf/moonshotai/kimi-k2.7-code";
@@ -37,23 +37,29 @@ function createAppRegistry() {
 
 /** One Channels conversation per object, on the harness's root session. */
 export class PiChannelsAgent extends DurableObject<Env> {
+  readonly ai = createAI({ binding: this.env.AI });
   readonly registry = createAppRegistry();
   readonly harness = new PiHarness({
     harness: ({ storage, context }) =>
       Harness.open(
         storage,
         {
-          models: createModels({ providers: [workersAI(this.env.AI)] }),
+          models: this.#models(),
           registry: this.registry,
           onReport: (error) => console.warn("pi report", error)
         },
         context
       ),
     defaults: {
-      model: { provider: "cloudflare-workers-ai", modelId: MODEL_ID },
+      model: { provider: CLOUDFLARE_PROVIDER_ID, modelId: MODEL_ID },
       thinkingLevel: "low"
     }
   });
+  #models() {
+    const models = createModels();
+    models.setProvider(this.ai.provider);
+    return models;
+  }
   readonly bridge: HarnessChannels = new HarnessChannels({
     harness: this.harness,
     channels: (): Channels => this.channels,

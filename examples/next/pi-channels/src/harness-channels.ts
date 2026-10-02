@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
   AgentEvent,
+  EntryRecord,
   AgentEventStream,
   MessageChange,
   SubmissionRecord,
@@ -19,13 +20,16 @@ import type {
   TranscriptMessage,
   TurnStatus
 } from "agents/channels";
-import { projectEntry } from "../../harnesses/pi/src/harness/messages";
 import type {
-  PiMessage,
   PiOperationResult,
   PiReceipt,
   PiSubmitOptions
-} from "../../harnesses/pi/src/harness/types";
+} from "agents/harnesses/pi";
+import {
+  projectEntries,
+  projectEntry,
+  type PiMessage
+} from "../../harnesses/pi/src/transcript";
 
 /**
  * The harness shape shared by `examples/next/harnesses` (`submit`, `abort`,
@@ -38,7 +42,7 @@ export type ConversationHarness = {
   submit(input: UserInput, options?: PiSubmitOptions): Promise<PiReceipt>;
   abort(options?: { operationId?: string }): Promise<boolean>;
   wait(operationId: string): Promise<PiOperationResult>;
-  messages(): Promise<PiMessage[]>;
+  messages(): Promise<EntryRecord[]>;
   session(): { events(): Promise<AgentEventStream> };
 };
 
@@ -315,8 +319,9 @@ export class HarnessChannels {
   }
 
   async #transcript(): Promise<TranscriptMessage[]> {
-    return toTranscript(await this.#harness.messages(), (entryId) =>
-      this.#kv.get<string>(`user:${entryId}`)
+    return toTranscript(
+      projectEntries(await this.#harness.messages()),
+      (entryId) => this.#kv.get<string>(`user:${entryId}`)
     );
   }
 
