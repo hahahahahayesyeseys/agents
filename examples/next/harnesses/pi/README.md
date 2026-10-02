@@ -17,8 +17,11 @@ The example composes:
 - app glue that is not part of the harness: `sockets.ts` puts one session
   per socket on `WebSockets`, and `view.ts` and `transcript.ts` fold pi's
   entries and events into what the UI shows;
-- two tools: `current_time`, and `sleep`, a replay-safe wait whose
-  deadline survives an eviction;
+- a `Workspace` from `@cloudflare/computer` on the same SQLite database,
+  with its tools from `@cloudflare/computer/tools/pi-ai`, adapted to pi's
+  registry in `workspace.ts`: `read`, `ls`, `find`, `grep`, `write`, `edit`,
+  `delete`, and `exec`, which runs JavaScript modules in a Dynamic Worker
+  with `node:fs/promises` and `ws:git`;
 - `createAI` from `agents/models/pi-ai`: Workers AI, and other vendors through
   AI Gateway, all over the `AI` binding, registered on pi's `Models`.
 
@@ -42,11 +45,9 @@ one account, set `CLOUDFLARE_ACCOUNT_ID` when starting.
 
 ## What to try
 
-- `What time is it?`
-- `Tell me the time, sleep for 10 seconds, then tell me the time again.`
-- `Sleep for 2 minutes, then tell me how long you actually slept.` The
-  object stays alive through the wake job's alarm, not through
-  `sleep`'s timer.
+- `Write a haiku about Durable Objects to /workspace/haiku.txt, then read it back.`
+- `Use exec to run JavaScript that lists /workspace and returns the size of each file.`
+- `Clone https://github.com/octocat/Hello-World into /workspace/hello, then show its git log.`
 - While a turn runs, type and press Enter to queue a follow-up, or Steer to
   join the running turn.
 
@@ -76,8 +77,13 @@ recovers.
 export class PiAgent extends DurableObject<Env> {
   // Workers AI and AI Gateway over the AI binding, as a pi-ai provider.
   readonly ai = createAI({ binding: this.env.AI });
-  // pi's own registry: system prompt, tools (sleep, current_time), hooks.
-  readonly registry = createAppRegistry();
+  // A durable filesystem; `exec` runs JavaScript in a Dynamic Worker.
+  readonly workspace = new Workspace({
+    storage: this.ctx.storage,
+    backends: [new WorkerJavaScriptBackend({ loader: this.env.LOADER })]
+  });
+  // pi's own registry: system prompt and the workspace tools.
+  readonly registry = createAppRegistry(this.workspace);
   readonly harness = new PiHarness({
     harness: ({ storage, context }) =>
       Harness.open(
@@ -144,7 +150,7 @@ projection of them, in `src/transcript.ts`.
 ## Pi source
 
 Pi comes from npm: `@earendil-works/pi-durable`, `pi-ai`, `chord` and
-`pi-telemetry` at `^0.99.2`. Pi is MIT licensed; see
+`pi-telemetry` at `^1.0.0`. Pi is MIT licensed; see
 [`licenses/mit-earendil-pi.txt`](./licenses/mit-earendil-pi.txt).
 
 Note that the repository sets `minimumReleaseAge: 1440` in
