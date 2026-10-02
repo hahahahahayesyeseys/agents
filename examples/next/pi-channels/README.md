@@ -1,8 +1,7 @@
 # Pi harness on Channels (spike)
 
 Experimental proof of concept. It serves the example `PiHarness` from
-[`../harnesses/pi`](../harnesses/pi) through Channels, so the Web Channel browser client and
-`npx agents tui` talk to a pi-durable agent. It is not well engineered and is
+[`../harnesses/pi`](../harnesses/pi) through Channels, so `npx agents tui` talks to a pi-durable agent. It is not well engineered and is
 not meant to merge as is.
 
 - `src/server.ts` is one Durable Object per room: `PiHarness` (imported from
@@ -12,7 +11,6 @@ not meant to merge as is.
   `ConversationHarness`, the part of the shared `examples/next/harnesses`
   shape it uses (`submit`, `abort`, `wait`, `messages`,
   `session().events()`). `PiHarness` satisfies it structurally.
-- `src/client.tsx` is the minimal example's browser client.
 
 ## How the two models line up
 
@@ -53,14 +51,13 @@ pnpm start
 The example uses the remote Workers AI binding. If your Wrangler login has
 more than one account, set `CLOUDFLARE_ACCOUNT_ID`.
 
-Open the printed URL, and add `#room` for a separate conversation. In
-another terminal, with the dev server running:
+In another terminal, with the dev server running:
 
 ```sh
 pnpm tui [room]
 ```
 
-Set `AGENT_ORIGIN` if the dev server is not on `http://localhost:5173`. The
-browser and the TUI can share a room and see each other's turns.
+Set `AGENT_ORIGIN` if the dev server is not on `http://localhost:5173`. Two
+terminals in the same room see each other's turns.
 
 Try `What time is it?`.

@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/agents-next-pi-channels-example",
-  "description": "Spike: the example PiHarness served through Channels, to the Web Channel and the Pi TUI",
+  "description": "Spike: the example PiHarness served through Channels to the Pi TUI",
   "private": true,
   "type": "module",
   "version": "0.0.0",
@@ -11,24 +11,16 @@
     "tui": "sh -c 'tsx ../../../packages/agents/src/cli/index.ts tui \"${AGENT_ORIGIN:-http://localhost:5173}/channels/${1:-default}\" --as \"terminal-$$\"' tui"
   },
   "dependencies": {
-    "@cloudflare/kumo": "^2.6.0",
     "@earendil-works/chord": "^0.99.2",
     "@earendil-works/pi-ai": "^0.99.2",
     "@earendil-works/pi-durable": "^0.99.2",
     "@earendil-works/pi-telemetry": "^0.99.2",
     "agents": "*",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
     "typebox": "1.3.27"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.62.3",
     "@cloudflare/workers-types": "^5.20260729.1",
-    "@tailwindcss/vite": "^4",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.3",
-    "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3",
     "vite": "^8.1.0",
     "wrangler": "^4.145.0"
